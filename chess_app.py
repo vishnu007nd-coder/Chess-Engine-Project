@@ -161,6 +161,33 @@ class ChessPiece:
                 target = board[new_row][new_col]
                 if target is None or target.color != self.color:
                     moves.append((new_row, new_col))
+        
+        # Castling moves
+        if not self.has_moved:
+            castling_moves = self._get_castling_moves(board)
+            moves.extend(castling_moves)
+        
+        return moves
+    
+    def _get_castling_moves(self, board):
+        """Get castling moves for the king"""
+        moves = []
+        
+        # Kingside castling (O-O)
+        if self.col == 4:  # King must be on e-file
+            rook_col = 7
+            if board[self.row][rook_col] and board[self.row][rook_col].piece_type == PieceType.ROOK and not board[self.row][rook_col].has_moved:
+                # Check if path is clear
+                if board[self.row][5] is None and board[self.row][6] is None:
+                    moves.append((self.row, 6))  # King lands on g-file
+            
+            # Queenside castling (O-O-O)
+            rook_col = 0
+            if board[self.row][rook_col] and board[self.row][rook_col].piece_type == PieceType.ROOK and not board[self.row][rook_col].has_moved:
+                # Check if path is clear
+                if board[self.row][1] is None and board[self.row][2] is None and board[self.row][3] is None:
+                    moves.append((self.row, 2))  # King lands on c-file
+        
         return moves
 
 class Board:
@@ -200,6 +227,24 @@ class Board:
         """Move a piece from one position to another"""
         piece = self.board[from_row][from_col]
         if piece:
+            # Check for castling
+            if piece.piece_type == PieceType.KING and abs(to_col - from_col) == 2:
+                # Castling move
+                if to_col == 6:  # Kingside castling
+                    # Move rook from h-file to f-file
+                    rook = self.board[from_row][7]
+                    rook.col = 5
+                    rook.has_moved = True
+                    self.board[from_row][5] = rook
+                    self.board[from_row][7] = None
+                elif to_col == 2:  # Queenside castling
+                    # Move rook from a-file to d-file
+                    rook = self.board[from_row][0]
+                    rook.col = 3
+                    rook.has_moved = True
+                    self.board[from_row][3] = rook
+                    self.board[from_row][0] = None
+            
             piece.row = to_row
             piece.col = to_col
             piece.has_moved = True
@@ -211,6 +256,129 @@ class Board:
     def get_piece_at(self, row, col):
         """Get piece at specific position"""
         return self.board[row][col]
+    
+    def find_king(self, color):
+        """Find the king of a given color"""
+        for row in range(8):
+            for col in range(8):
+                piece = self.board[row][col]
+                if piece and piece.piece_type == PieceType.KING and piece.color == color:
+                    return (row, col)
+        return None
+    
+    def is_square_attacked(self, row, col, by_color):
+        """Check if a square is attacked by pieces of given color"""
+        for r in range(8):
+            for c in range(8):
+                piece = self.board[r][c]
+                if piece and piece.color == by_color:
+                    # Get all possible moves for this piece
+                    moves = piece.get_possible_moves(self.board)
+                    if (row, col) in moves:
+                        return True
+        return False
+    
+    def is_king_in_check(self, color):
+        """Check if king of given color is in check"""
+        king_pos = self.find_king(color)
+        if not king_pos:
+            return False
+        
+        enemy_color = PieceColor.BLACK if color == PieceColor.WHITE else PieceColor.WHITE
+        row, col = king_pos
+        return self.is_square_attacked(row, col, enemy_color)
+    
+    def has_legal_moves(self, color):
+        """Check if a player has any legal moves"""
+        for row in range(8):
+            for col in range(8):
+                piece = self.board[row][col]
+                if piece and piece.color == color:
+                    # Check all possible moves for this piece
+                    moves = piece.get_possible_moves(self.board)
+                    for move_row, move_col in moves:
+                        # Check if move would leave king in check
+                        if not self.would_be_in_check_after_move(row, col, move_row, move_col, color):
+                            return True
+        return False
+    
+    def is_checkmate(self, color):
+        """Check if a player is in checkmate"""
+        return self.is_king_in_check(color) and not self.has_legal_moves(color)
+    
+    def is_stalemate(self, color):
+        """Check if a player is in stalemate (not in check but no legal moves)"""
+        return not self.is_king_in_check(color) and not self.has_legal_moves(color)
+    
+    def is_castling_move(self, from_row, from_col, to_row, to_col):
+        """Check if a move is a castling move"""
+        piece = self.board[from_row][from_col]
+        return piece and piece.piece_type == PieceType.KING and abs(to_col - from_col) == 2
+    
+    def is_valid_castling(self, from_row, from_col, to_row, to_col, color):
+        """Validate castling move (king can't move through check)"""
+        if not self.is_castling_move(from_row, from_col, to_row, to_col):
+            return True
+        
+        # Check king's path for check
+        if to_col == 6:  # Kingside
+            check_cols = [5, 6]
+        else:  # Queenside
+            check_cols = [2, 3]
+        
+        for col in check_cols:
+            if self.is_square_attacked(from_row, col, PieceColor.BLACK if color == PieceColor.WHITE else PieceColor.WHITE):
+                return False
+        
+        return True
+    
+    def would_be_in_check_after_move(self, from_row, from_col, to_row, to_col, color):
+        """Simulate a move and check if king would be in check"""
+        # Save current state
+        piece = self.board[from_row][from_col]
+        captured_piece = self.board[to_row][to_col]
+        rook = None
+        rook_from_col = None
+        rook_to_col = None
+        
+        # Handle castling simulation
+        if piece.piece_type == PieceType.KING and abs(to_col - from_col) == 2:
+            if to_col == 6:  # Kingside
+                rook = self.board[from_row][7]
+                rook_from_col = 7
+                rook_to_col = 5
+            else:  # Queenside
+                rook = self.board[from_row][0]
+                rook_from_col = 0
+                rook_to_col = 3
+        
+        # Simulate the move
+        self.board[to_row][to_col] = piece
+        self.board[from_row][from_col] = None
+        piece.row = to_row
+        piece.col = to_col
+        
+        # Simulate rook move if castling
+        if rook:
+            self.board[from_row][rook_to_col] = rook
+            self.board[from_row][rook_from_col] = None
+            rook.col = rook_to_col
+        
+        # Check if king is in check
+        in_check = self.is_king_in_check(color)
+        
+        # Restore board state
+        self.board[from_row][from_col] = piece
+        self.board[to_row][to_col] = captured_piece
+        piece.row = from_row
+        piece.col = from_col
+        
+        if rook:
+            self.board[from_row][rook_from_col] = rook
+            self.board[from_row][rook_to_col] = None
+            rook.col = rook_from_col
+        
+        return in_check
 
 class ChessGame:
     def __init__(self):
@@ -218,9 +386,32 @@ class ChessGame:
         self.selected_piece = None
         self.possible_moves = []
         self.current_player = PieceColor.WHITE
+        self.in_check = False
+        self.game_over = False
+        self.winner = None
+    
+    def get_legal_moves(self, piece):
+        """Get legal moves that don't leave king in check"""
+        all_moves = piece.get_possible_moves(self.board.board)
+        legal_moves = []
+        
+        for move in all_moves:
+            # Check castling validity
+            if self.board.is_castling_move(piece.row, piece.col, move[0], move[1]):
+                if not self.board.is_valid_castling(piece.row, piece.col, move[0], move[1], piece.color):
+                    continue
+            
+            # Check if move would leave king in check
+            if not self.board.would_be_in_check_after_move(piece.row, piece.col, move[0], move[1], piece.color):
+                legal_moves.append(move)
+        
+        return legal_moves
     
     def handle_click(self, pos):
         """Handle mouse click to select/move pieces"""
+        if self.game_over:
+            return
+        
         col = pos[0] // SQUARE_SIZE
         row = pos[1] // SQUARE_SIZE
         
@@ -229,13 +420,22 @@ class ChessGame:
             piece = self.board.get_piece_at(row, col)
             if piece and piece.color == self.current_player:
                 self.selected_piece = (row, col)
-                self.possible_moves = piece.get_possible_moves(self.board.board)
+                self.possible_moves = self.get_legal_moves(piece)
         else:
             # Try to move the piece
             if (row, col) in self.possible_moves:
                 from_row, from_col = self.selected_piece
                 self.board.move_piece(from_row, from_col, row, col)
                 self.current_player = PieceColor.BLACK if self.current_player == PieceColor.WHITE else PieceColor.WHITE
+                self.in_check = self.board.is_king_in_check(self.current_player)
+                
+                # Check for checkmate or stalemate
+                if self.board.is_checkmate(self.current_player):
+                    self.game_over = True
+                    self.winner = PieceColor.BLACK if self.current_player == PieceColor.WHITE else PieceColor.WHITE
+                elif self.board.is_stalemate(self.current_player):
+                    self.game_over = True
+                    self.winner = None  # Draw
             
             self.selected_piece = None
             self.possible_moves = []
@@ -271,12 +471,43 @@ class ChessGame:
                 center_x = move_col * SQUARE_SIZE + SQUARE_SIZE // 2
                 center_y = move_row * SQUARE_SIZE + SQUARE_SIZE // 2
                 pygame.draw.circle(screen, YELLOW, (center_x, center_y), 5)
+        
+        # Highlight king if in check
+        if self.in_check:
+            king_pos = self.board.find_king(self.current_player)
+            if king_pos:
+                row, col = king_pos
+                rect = pygame.Rect(col * SQUARE_SIZE, row * SQUARE_SIZE, SQUARE_SIZE, SQUARE_SIZE)
+                pygame.draw.rect(screen, RED, rect, 4)
     
     def draw(self):
         """Draw the entire game"""
         self.draw_board()
         self.draw_pieces()
         self.draw_highlights()
+        
+        font = pygame.font.Font(None, 36)
+        
+        # Draw game end messages
+        if self.game_over:
+            if self.winner:
+                winner_name = "White" if self.winner == PieceColor.WHITE else "Black"
+                game_text = font.render(f"CHECKMATE! {winner_name} wins!", True, RED)
+            else:
+                game_text = font.render("STALEMATE! Game is a draw.", True, YELLOW)
+            
+            text_rect = game_text.get_rect(center=(WIDTH // 2, HEIGHT // 2))
+            # Draw semi-transparent background
+            bg_rect = text_rect.inflate(40, 40)
+            pygame.draw.rect(screen, BLACK, bg_rect)
+            screen.blit(game_text, text_rect)
+        
+        # Draw check status
+        elif self.in_check:
+            player_name = "White" if self.current_player == PieceColor.WHITE else "Black"
+            check_text = font.render(f"{player_name} is in CHECK!", True, RED)
+            screen.blit(check_text, (10, 10))
+        
         pygame.display.flip()
 
 def main():
