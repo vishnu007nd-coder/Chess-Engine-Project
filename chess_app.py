@@ -1,12 +1,15 @@
 import pygame
 import sys
 from enum import Enum
+import numpy as np
 
 pygame.init()
+pygame.mixer.init()
 
 # Screen dimensions
-WIDTH, HEIGHT = 800, 800
+WIDTH, HEIGHT = 800, 900
 SQUARE_SIZE = WIDTH // 8
+STATUS_BAR_HEIGHT = 100
 
 # Colors
 WHITE = (255, 255, 255)
@@ -16,12 +19,30 @@ DARK_GRAY = (181, 136, 99)
 GREEN = (0, 255, 0)
 YELLOW = (255, 255, 0)
 RED = (255, 0, 0)
+BLUE = (0, 100, 255)
+DARK_BLUE = (0, 50, 150)
 
-# Create screen
-screen = pygame.display.set_mode((WIDTH, HEIGHT))
+# Create screen and status bar
+screen = pygame.display.set_mode((WIDTH, HEIGHT + STATUS_BAR_HEIGHT))
 pygame.display.set_caption("Chess Game")
 clock = pygame.time.Clock()
 FPS = 60
+
+# Audio helper function
+def create_beep_sound(frequency=440, duration=100):
+    """Create a simple beep sound"""
+    sample_rate = 22050
+    frames = int(duration * sample_rate / 1000)
+    arr = np.sin(2 * np.pi * frequency * np.arange(frames) / sample_rate)
+    arr = (arr * 32767).astype(np.int16)
+    sound = pygame.sndarray.make_sound(arr)
+    return sound
+
+# Create sound effects
+capture_sound = create_beep_sound(frequency=800, duration=80)
+check_sound = create_beep_sound(frequency=1000, duration=150)
+checkmate_sound = create_beep_sound(frequency=600, duration=200)
+move_sound = create_beep_sound(frequency=500, duration=50)
 
 # Piece types
 class PieceType(Enum):
@@ -389,6 +410,10 @@ class ChessGame:
         self.in_check = False
         self.game_over = False
         self.winner = None
+        self.move_history = []
+        self.captured_pieces = {"white": [], "black": []}
+        self.last_move = None
+        self.last_capture = False
     
     def get_legal_moves(self, piece):
         """Get legal moves that don't leave king in check"""
@@ -425,14 +450,35 @@ class ChessGame:
             # Try to move the piece
             if (row, col) in self.possible_moves:
                 from_row, from_col = self.selected_piece
+                piece = self.board.get_piece_at(from_row, from_col)
+                
+                # Check if this is a capture
+                captured = self.board.get_piece_at(row, col)
+                if captured:
+                    self.last_capture = True
+                    captured_color = "white" if captured.color == PieceColor.WHITE else "black"
+                    self.captured_pieces[captured_color].append(captured.piece_type)
+                    capture_sound.play()
+                else:
+                    self.last_capture = False
+                    move_sound.play()
+                
                 self.board.move_piece(from_row, from_col, row, col)
+                self.last_move = (from_row, from_col, row, col)
+                self.move_history.append(self.last_move)
+                
                 self.current_player = PieceColor.BLACK if self.current_player == PieceColor.WHITE else PieceColor.WHITE
                 self.in_check = self.board.is_king_in_check(self.current_player)
+                
+                # Play check sound
+                if self.in_check:
+                    check_sound.play()
                 
                 # Check for checkmate or stalemate
                 if self.board.is_checkmate(self.current_player):
                     self.game_over = True
                     self.winner = PieceColor.BLACK if self.current_player == PieceColor.WHITE else PieceColor.WHITE
+                    checkmate_sound.play()
                 elif self.board.is_stalemate(self.current_player):
                     self.game_over = True
                     self.winner = None  # Draw
@@ -482,9 +528,16 @@ class ChessGame:
     
     def draw(self):
         """Draw the entire game"""
+        # Clear screen
+        screen.fill(BLACK)
+        
+        # Draw board and pieces
         self.draw_board()
         self.draw_pieces()
         self.draw_highlights()
+        
+        # Draw status bar
+        self.draw_status_bar()
         
         font = pygame.font.Font(None, 36)
         
@@ -509,6 +562,44 @@ class ChessGame:
             screen.blit(check_text, (10, 10))
         
         pygame.display.flip()
+    
+    def draw_status_bar(self):
+        """Draw the status bar with game information and captured pieces"""
+        # Status bar background
+        bar_rect = pygame.Rect(0, HEIGHT, WIDTH, STATUS_BAR_HEIGHT)
+        pygame.draw.rect(screen, DARK_BLUE, bar_rect)
+        pygame.draw.line(screen, BLUE, (0, HEIGHT), (WIDTH, HEIGHT), 2)
+        
+        font_small = pygame.font.Font(None, 24)
+        font_normal = pygame.font.Font(None, 28)
+        
+        # Current player info
+        current_player_text = f"Current: {'White' if self.current_player == PieceColor.WHITE else 'Black'}"
+        text = font_normal.render(current_player_text, True, WHITE)
+        screen.blit(text, (10, HEIGHT + 10))
+        
+        # Move count
+        move_count_text = f"Moves: {len(self.move_history)}"
+        text = font_small.render(move_count_text, True, WHITE)
+        screen.blit(text, (10, HEIGHT + 45))
+        
+        # Captured white pieces
+        white_captured_text = "White captured: "
+        for piece_type in self.captured_pieces["white"]:
+            symbols = {PieceType.PAWN: 'P', PieceType.ROOK: 'R', PieceType.KNIGHT: 'K', 
+                      PieceType.BISHOP: 'B', PieceType.QUEEN: 'Q', PieceType.KING: 'K'}
+            white_captured_text += symbols[piece_type] + " "
+        text = font_small.render(white_captured_text, True, WHITE)
+        screen.blit(text, (250, HEIGHT + 10))
+        
+        # Captured black pieces
+        black_captured_text = "Black captured: "
+        for piece_type in self.captured_pieces["black"]:
+            symbols = {PieceType.PAWN: 'P', PieceType.ROOK: 'R', PieceType.KNIGHT: 'K', 
+                      PieceType.BISHOP: 'B', PieceType.QUEEN: 'Q', PieceType.KING: 'K'}
+            black_captured_text += symbols[piece_type] + " "
+        text = font_small.render(black_captured_text, True, WHITE)
+        screen.blit(text, (250, HEIGHT + 45))
 
 def main():
     game = ChessGame()
